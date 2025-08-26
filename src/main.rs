@@ -34,9 +34,11 @@ impl GemmaQA {
             .build()?;
         let model = api.model(MODEL_ID.to_string());
         let config = model.get("config.json")?;
-
+        let path = config.into_os_string().into_string().unwrap();
+        println!("config path: {:?}", path);
+        let config: Config = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        println!("Config: {:?}", config);
         
-        let config: Config = serde_json::from_str(&config.into_os_string().into_string().unwrap())?;
         let weights = model.get("model.safetensors")?;
         let weights = std::fs::read(weights.into_os_string().into_string().unwrap())?;
 
