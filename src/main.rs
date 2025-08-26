@@ -2,8 +2,14 @@ use anyhow::Result;
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::gemma::{Config, Model};
-use std::io::{self, Write};
+use hf_hub::{
+    api::sync::{Api, ApiBuilder},
+    Repo, RepoType,
+};
+use std::{io::{self, Write}, path::PathBuf};
 use tokenizers::Tokenizer;
+
+const MODEL_ID: &str = "google/gemma-3-270m";
 
 struct GemmaQA {
     model: Model,
@@ -19,18 +25,31 @@ impl GemmaQA {
         let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
 
         // Try to load a publicly available model first
-        let model_id = "distilbert-base-uncased";
+        let hf_token = std::env::var("HF_TOKEN")?;
 
-        println!("Attempting to load tokenizer from: {}", model_id);
+        let api = ApiBuilder::new()
+            .with_progress(true)
+            .with_cache_dir(PathBuf::from("huggingface"))
+            .with_token(Some(hf_token))
+            .build()?;
+        let model = api.model(MODEL_ID.to_string());
+        let config = model.get("config.json")?;
+
+        
+        let config: Config = serde_json::from_str(&config.into_os_string().into_string().unwrap())?;
+        let weights = model.get("model.safetensors")?;
+        let weights = std::fs::read(weights.into_os_string().into_string().unwrap())?;
+
+        println!("Attempting to load tokenizer from: {}", MODEL_ID);
 
         // Load tokenizer
-        let tokenizer = match Tokenizer::from_pretrained(model_id, None) {
+        let tokenizer = match Tokenizer::from_pretrained(MODEL_ID, None) {
             Ok(t) => {
-                println!("✅ Tokenizer loaded successfully from {}", model_id);
+                println!("✅ Tokenizer loaded successfully from {}", MODEL_ID);
                 t
             }
             Err(e) => {
-                println!("⚠️  Failed to load tokenizer from {}: {}", model_id, e);
+                println!("⚠️  Failed to load tokenizer from {}: {}", MODEL_ID, e);
                 println!("Creating a basic tokenizer instead...");
 
                 // Create a basic tokenizer as fallback
@@ -38,25 +57,6 @@ impl GemmaQA {
             }
         };
 
-        // Create model configuration for Gemma 3 270M (for demonstration)
-        let config = Config {
-            attention_bias: false,
-            head_dim: 64,
-            hidden_act: Some(candle_nn::Activation::Gelu),
-            hidden_activation: None,
-            hidden_size: 1024,
-            intermediate_size: 2816,
-            num_attention_heads: 16,
-            num_hidden_layers: 20,
-            num_key_value_heads: 16,
-            rms_norm_eps: 1e-6,
-            rope_theta: 10000.0,
-            vocab_size: 256000,
-            max_position_embeddings: 8192,
-        };
-
-        // Create VarBuilder for model weights
-        // For now, we'll create an empty VarBuilder since we need to download the actual weights
         let vb = VarBuilder::zeros(DType::F32, &device);
         let model = Model::new(false, &config, vb)?;
 
