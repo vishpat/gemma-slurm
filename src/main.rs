@@ -8,12 +8,124 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::{
-    io::{self, Write},
     path::PathBuf,
 };
+use anyhow::{Error as E};
 use tokenizers::Tokenizer;
+use candle_transformers::generation::LogitsProcessor;
+
+mod token_output_stream;
+use crate::token_output_stream::TokenOutputStream;
 
 const MODEL_ID: &str = "google/gemma-3-270m";
+
+struct TextGeneration {
+    model: Model,
+    device: Device,
+    tokenizer: TokenOutputStream,
+    logits_processor: LogitsProcessor,
+    repeat_penalty: f32,
+    repeat_last_n: usize,
+}
+
+impl TextGeneration {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        model: Model,
+        tokenizer: Tokenizer,
+        seed: u64,
+        temp: Option<f64>,
+        top_p: Option<f64>,
+        repeat_penalty: f32,
+        repeat_last_n: usize,
+        device: &Device,
+    ) -> Self {
+        let logits_processor = LogitsProcessor::new(seed, temp, top_p);
+        Self {
+            model,
+            tokenizer: TokenOutputStream::new(tokenizer),
+            logits_processor,
+            repeat_penalty,
+            repeat_last_n,
+            device: device.clone(),
+        }
+    }
+
+    fn run(&mut self, prompt: &str, sample_len: usize) -> Result<()> {
+        use std::io::Write;
+        self.tokenizer.clear();
+        let mut tokens = self
+            .tokenizer
+            .tokenizer()
+            .encode(prompt, true)
+            .map_err(E::msg)?
+            .get_ids()
+            .to_vec();
+        for &t in tokens.iter() {
+            if let Some(t) = self.tokenizer.next_token(t)? {
+                print!("{t}")
+            }
+        }
+        std::io::stdout().flush()?;
+
+        let mut generated_tokens = 0usize;
+        let eos_token = match self.tokenizer.get_token("<eos>") {
+            Some(token) => token,
+            None => anyhow::bail!("cannot find the <eos> token"),
+        };
+
+        let eot_token = match self.tokenizer.get_token("<end_of_turn>") {
+            Some(token) => token,
+            None => {
+                println!(
+                    "Warning: <end_of_turn> token not found in tokenizer, using <eos> as a backup"
+                );
+                eos_token
+            }
+        };
+
+        let start_gen = std::time::Instant::now();
+        for index in 0..sample_len {
+            let context_size = if index > 0 { 1 } else { tokens.len() };
+            let start_pos = tokens.len().saturating_sub(context_size);
+            let ctxt = &tokens[start_pos..];
+            let input = Tensor::new(ctxt, &self.device)?.unsqueeze(0)?;
+            let logits = self.model.forward(&input, start_pos)?;
+            let logits = logits.squeeze(0)?.squeeze(0)?.to_dtype(DType::F32)?;
+            let logits = if self.repeat_penalty == 1. {
+                logits
+            } else {
+                let start_at = tokens.len().saturating_sub(self.repeat_last_n);
+                candle_transformers::utils::apply_repeat_penalty(
+                    &logits,
+                    self.repeat_penalty,
+                    &tokens[start_at..],
+                )?
+            };
+
+            let next_token = self.logits_processor.sample(&logits)?;
+            tokens.push(next_token);
+            generated_tokens += 1;
+            if next_token == eos_token || next_token == eot_token {
+                break;
+            }
+            if let Some(t) = self.tokenizer.next_token(next_token)? {
+                print!("{t}");
+                std::io::stdout().flush()?;
+            }
+        }
+        let dt = start_gen.elapsed();
+        if let Some(rest) = self.tokenizer.decode_rest().map_err(E::msg)? {
+            print!("{rest}");
+        }
+        std::io::stdout().flush()?;
+        println!(
+            "\n{generated_tokens} tokens generated ({:.2} token/s)",
+            generated_tokens as f64 / dt.as_secs_f64(),
+        );
+        Ok(())
+    }
+}
 
 struct GemmaQA {
     model: Model,
@@ -93,60 +205,7 @@ impl GemmaQA {
             device,
         })
     }
-
-    fn generate_response(&self, prompt: &str, max_length: usize) -> Result<String> {
-        // Tokenize the input prompt
-        let tokens = match self.tokenizer.encode(prompt, true) {
-            Ok(t) => t,
-            Err(e) => {
-                return Ok(format!(
-                    "⚠️  Tokenization failed: {}. Input: '{}'",
-                    e, prompt
-                ));
-            }
-        };
-
-        let input_ids = tokens.get_ids();
-
-        // Convert to tensor
-        let _input_tensor = match Tensor::new(input_ids, &self.device) {
-            Ok(t) => t,
-            Err(e) => {
-                return Ok(format!(
-                    "⚠️  Tensor creation failed: {}. Input: '{}'",
-                    e, prompt
-                ));
-            }
-        };
-
-        let _input_tensor = match _input_tensor.unsqueeze(0) {
-            Ok(t) => t,
-            Err(e) => {
-                return Ok(format!(
-                    "⚠️  Tensor reshaping failed: {}. Input: '{}'",
-                    e, prompt
-                ));
-            }
-        };
-
-        // For demonstration, we'll just return the tokenized input
-        // In a real implementation with loaded weights, you would:
-        // 1. Run the model forward pass
-        // 2. Generate tokens autoregressively
-        // 3. Decode the output tokens
-
-        let token_count = input_ids.len();
-        let response = format!(
-            "✅ Input processed successfully! \
-            📊 Found {} tokens. \
-            🎯 Max response length: {} tokens. \
-            📝 Input: '{}' \
-            💡 In a full implementation with loaded weights, the model would generate an actual response.",
-            token_count, max_length, prompt
-        );
-
-        Ok(response)
-    }
+  
 }
 
 #[tokio::main]
@@ -166,35 +225,9 @@ async fn main() -> Result<()> {
     println!("\n✅ System ready! Type your questions below (type 'quit' to exit)");
     println!("{}", "=".repeat(50));
 
-    loop {
-        print!("\n🤔 Question: ");
-        io::stdout().flush()?;
+    let mut pipeline = TextGeneration::new(gemma_qa.model, gemma_qa.tokenizer, 42, None, None, 1.0, 64, &gemma_qa.device);
+    pipeline.run("Hello, how are you?", 100)?;
 
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-
-        let input = input.trim();
-
-        if input.to_lowercase() == "quit" || input.to_lowercase() == "exit" {
-            println!("👋 Goodbye!");
-            break;
-        }
-
-        if input.is_empty() {
-            continue;
-        }
-
-        println!("🤖 Processing input...");
-
-        match gemma_qa.generate_response(input, 100) {
-            Ok(response) => {
-                println!("💡 Answer: {}", response);
-            }
-            Err(e) => {
-                eprintln!("❌ Error processing input: {}", e);
-            }
-        }
-    }
 
     Ok(())
 }
