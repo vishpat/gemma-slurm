@@ -2,11 +2,15 @@ use anyhow::Result;
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::gemma::{Config, Model};
-use hf_hub::{
-    api::sync::{Api, ApiBuilder},
-    Repo, RepoType,
+use hf_hub::api::sync::ApiBuilder;
+use safetensors::SafeTensors;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::Read;
+use std::{
+    io::{self, Write},
+    path::PathBuf,
 };
-use std::{io::{self, Write}, path::PathBuf};
 use tokenizers::Tokenizer;
 
 const MODEL_ID: &str = "google/gemma-3-270m";
@@ -15,6 +19,20 @@ struct GemmaQA {
     model: Model,
     tokenizer: Tokenizer,
     device: Device,
+}
+fn load_safetensors(path: &str, device: &Device) -> Result<HashMap<String, Tensor>> {
+    let mut bytes = Vec::new();
+    let mut file = File::open(path)?;
+    file.read_to_end(&mut bytes)?;
+    let safetensors = SafeTensors::deserialize(&bytes)?;
+
+    let mut tensors = HashMap::new();
+    for (name, view) in safetensors.tensors() {
+        // Load each tensor onto the device
+        let tensor = Tensor::from_slice(view.data(), view.shape(), device)?;
+        tensors.insert(name.to_string(), tensor);
+    }
+    Ok(tensors)
 }
 
 impl GemmaQA {
@@ -35,12 +53,7 @@ impl GemmaQA {
         let model = api.model(MODEL_ID.to_string());
         let config = model.get("config.json")?;
         let path = config.into_os_string().into_string().unwrap();
-        println!("config path: {:?}", path);
         let config: Config = serde_json::from_str(&std::fs::read_to_string(path)?)?;
-        println!("Config: {:?}", config);
-        
-        let weights = model.get("model.safetensors")?;
-        let weights = std::fs::read(weights.into_os_string().into_string().unwrap())?;
 
         println!("Attempting to load tokenizer from: {}", MODEL_ID);
 
@@ -59,8 +72,15 @@ impl GemmaQA {
             }
         };
 
-        let vb = VarBuilder::zeros(DType::F32, &device);
+        let tensor_path = model.get("model.safetensors")?;
+        let tensors = load_safetensors(
+            &tensor_path.into_os_string().into_string().unwrap(),
+            &device,
+        )?;
+        println!("Tensors: {:?}", tensors);
+        let vb = VarBuilder::from_tensors(tensors, DType::F32, &device);
         let model = Model::new(false, &config, vb)?;
+        println!("Model: {:?}", model);
 
         println!("✅ Model configuration loaded successfully!");
         println!("📝 Note: This is a demonstration with model configuration only.");
