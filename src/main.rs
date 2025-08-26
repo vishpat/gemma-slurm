@@ -1,5 +1,5 @@
 use anyhow::Result;
-use candle_core::{Device, DType};
+use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::gemma::{Config, Model};
 use std::io::{self, Write};
@@ -87,7 +87,7 @@ impl GemmaQA {
         let input_ids = tokens.get_ids();
         
         // Convert to tensor
-        let _input_tensor = match candle_core::Tensor::new(input_ids, &self.device) {
+        let _input_tensor = match Tensor::new(input_ids, &self.device) {
             Ok(t) => t,
             Err(e) => {
                 return Ok(format!(
