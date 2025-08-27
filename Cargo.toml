@@ -7,6 +7,7 @@ edition = "2021"
 candle-core = { git = "https://github.com/huggingface/candle", package = "candle-core", features = ["cuda"] }
 candle-nn = { git = "https://github.com/huggingface/candle", package = "candle-nn", features = ["cuda"] }
 candle-transformers = { git = "https://github.com/huggingface/candle", package = "candle-transformers", features = ["cuda"] }
+candle-examples = { git = "https://github.com/huggingface/candle", package = "candle-examples", features = ["cuda"] }
 tokenizers = { version = "0.21.0", features = ["http"] }
 anyhow = "1.0"
 tokio = { version = "1.0", features = ["full"] }

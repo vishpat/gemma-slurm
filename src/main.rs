@@ -11,9 +11,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 use tokenizers::Tokenizer;
-
-mod token_output_stream;
-use crate::token_output_stream::TokenOutputStream;
+use candle_examples::token_output_stream::TokenOutputStream;
 
 const MODEL_ID: &str = "google/gemma-3-270m";
 const TEMPERATURE: f32 = 1.0;
@@ -210,7 +208,7 @@ impl GemmaModel {
         } else {
             DType::F32
         };
-        let vb = VarBuilder::from_tensors(tensors, DType::F32, &device);
+        let vb = VarBuilder::from_tensors(tensors, dtype, &device);
         let model = Model::new(false, &config, vb)?;
 
         Ok(Self {
