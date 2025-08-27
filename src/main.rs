@@ -1,18 +1,16 @@
+use anyhow::Error as E;
 use anyhow::Result;
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
+use candle_transformers::generation::LogitsProcessor;
 use candle_transformers::models::gemma::{Config, Model};
 use hf_hub::api::sync::ApiBuilder;
 use safetensors::SafeTensors;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
-use std::{
-    path::PathBuf,
-};
-use anyhow::{Error as E};
+use std::path::PathBuf;
 use tokenizers::Tokenizer;
-use candle_transformers::generation::LogitsProcessor;
 
 mod token_output_stream;
 use crate::token_output_stream::TokenOutputStream;
@@ -127,7 +125,7 @@ impl TextGeneration {
     }
 }
 
-struct GemmaQA {
+struct GemmaModel {
     model: Model,
     tokenizer: Tokenizer,
     device: Device,
@@ -147,7 +145,7 @@ fn load_safetensors(path: &str, device: &Device) -> Result<HashMap<String, Tenso
     Ok(tensors)
 }
 
-impl GemmaQA {
+impl GemmaModel {
     fn new() -> Result<Self> {
         println!("Loading language model...");
 
@@ -165,9 +163,17 @@ impl GemmaQA {
         let model = api.model(MODEL_ID.to_string());
         let config = model.get("config.json")?;
         let path = config.into_os_string().into_string().unwrap();
+        println!("Loading config from: {}", path);
+
         let config: Config = serde_json::from_str(&std::fs::read_to_string(path)?)?;
 
         println!("Attempting to load tokenizer from: {}", MODEL_ID);
+
+        let tokenizer_path = model.get("tokenizer.json")?;
+        println!(
+            "Loading tokenizer from: {}",
+            tokenizer_path.into_os_string().into_string().unwrap()
+        );
 
         // Load tokenizer
         let tokenizer = match Tokenizer::from_pretrained(MODEL_ID, None) {
@@ -185,19 +191,23 @@ impl GemmaQA {
         };
 
         let tensor_path = model.get("model.safetensors")?;
+        println!(
+            "Loading tensors from: {}",
+            &tensor_path.clone().into_os_string().into_string().unwrap()
+        );
+
         let tensors = load_safetensors(
             &tensor_path.into_os_string().into_string().unwrap(),
             &device,
         )?;
-        println!("Tensors: {:?}", tensors);
+        
+        let dtype = if device.is_cuda() {
+            DType::BF16
+        } else {
+            DType::F32
+        };
         let vb = VarBuilder::from_tensors(tensors, DType::F32, &device);
         let model = Model::new(false, &config, vb)?;
-        println!("Model: {:?}", model);
-
-        println!("✅ Model configuration loaded successfully!");
-        println!("📝 Note: This is a demonstration with model configuration only.");
-        println!("🔑 To load actual Gemma weights, you need Hugging Face authentication.");
-        println!("💡 The system can still tokenize and process text input.");
 
         Ok(Self {
             model,
@@ -205,7 +215,6 @@ impl GemmaQA {
             device,
         })
     }
-  
 }
 
 #[tokio::main]
@@ -213,8 +222,8 @@ async fn main() -> Result<()> {
     println!("🚀 Initializing Language Model Question-Answer System");
     println!("Loading model (this may take a moment on first run)...");
 
-    let gemma_qa = match GemmaQA::new() {
-        Ok(qa) => qa,
+    let gemma_model = match GemmaModel::new() {
+        Ok(model) => model,
         Err(e) => {
             eprintln!("❌ Failed to initialize system: {}", e);
             eprintln!("💡 This might be due to network issues or model availability");
@@ -225,9 +234,17 @@ async fn main() -> Result<()> {
     println!("\n✅ System ready! Type your questions below (type 'quit' to exit)");
     println!("{}", "=".repeat(50));
 
-    let mut pipeline = TextGeneration::new(gemma_qa.model, gemma_qa.tokenizer, 42, None, None, 1.0, 64, &gemma_qa.device);
-    pipeline.run("Hello, how are you?", 100)?;
-
+    let mut pipeline = TextGeneration::new(
+        gemma_model.model,
+        gemma_model.tokenizer,
+        100,
+        Some(1.1),
+        Some(0.95),
+        1.0,
+        64,
+        &gemma_model.device,
+    );
+    pipeline.run("Classify: This product is amazing", 100)?;
 
     Ok(())
 }
