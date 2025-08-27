@@ -16,6 +16,10 @@ mod token_output_stream;
 use crate::token_output_stream::TokenOutputStream;
 
 const MODEL_ID: &str = "google/gemma-3-270m";
+const TEMPERATURE: f32 = 1.0;
+const TOP_P: f32 = 0.95;
+const REPEAT_PENALTY: f32 = 1.1;
+const REPEAT_LAST_N: usize = 64;
 
 struct TextGeneration {
     model: Model,
@@ -200,7 +204,7 @@ impl GemmaModel {
             &tensor_path.into_os_string().into_string().unwrap(),
             &device,
         )?;
-        
+
         let dtype = if device.is_cuda() {
             DType::BF16
         } else {
@@ -238,13 +242,18 @@ async fn main() -> Result<()> {
         gemma_model.model,
         gemma_model.tokenizer,
         100,
-        Some(1.1),
-        Some(0.95),
-        1.0,
-        64,
+        Some(TEMPERATURE.into()),
+        Some(TOP_P.into()),
+        REPEAT_PENALTY,
+        REPEAT_LAST_N,
         &gemma_model.device,
     );
-    pipeline.run("Classify: This product is amazing", 100)?;
+    let prompt = "Classify: This product is amazing";
+    let prompt_it = format!(
+        "<start_of_turn> user\n{}<end_of_turn>\n<start_of_turn> model\n",
+        prompt
+    );
+    pipeline.run(&prompt, 100)?;
 
     Ok(())
 }
