@@ -249,10 +249,6 @@ async fn main() -> Result<()> {
         &gemma_model.device,
     );
     let prompt = "Classify: This product is amazing";
-    let prompt_it = format!(
-        "<start_of_turn> user\n{}<end_of_turn>\n<start_of_turn> model\n",
-        prompt
-    );
     pipeline.run(&prompt, 100)?;
 
     Ok(())
