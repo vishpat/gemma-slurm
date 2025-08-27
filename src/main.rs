@@ -9,7 +9,7 @@ use hf_hub::api::sync::ApiBuilder;
 use std::path::PathBuf;
 use tokenizers::Tokenizer;
 
-const MODEL_ID: &str = "google/gemma-3-1b-it";
+const MODEL_ID: &str = "google/gemma-3-270m";
 const TEMPERATURE: f32 = 1.0;
 const TOP_P: f32 = 0.95;
 const REPEAT_PENALTY: f32 = 1.1;
@@ -220,12 +220,8 @@ async fn main() -> Result<()> {
         REPEAT_LAST_N,
         &gemma_model.device,
     );
-    let prompt = "Classify: This product is amazing";
-    let prompt_it = format!(
-        "<start_of_turn> user\n{}<end_of_turn>\n<start_of_turn> model\n",
-        prompt
-    );
-    pipeline.run(&prompt_it, 100)?;
+    let prompt = "What is the capital of India?";
+    pipeline.run(&prompt, 100)?;
 
     Ok(())
 }
