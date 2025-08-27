@@ -3,7 +3,7 @@ use anyhow::Result;
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::generation::LogitsProcessor;
-use candle_transformers::models::gemma::{Config, Model};
+use candle_transformers::models::gemma3::{Config, Model};
 use hf_hub::api::sync::ApiBuilder;
 use safetensors::SafeTensors;
 use std::collections::HashMap;
