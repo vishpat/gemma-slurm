@@ -1,19 +1,15 @@
 use anyhow::Error as E;
 use anyhow::Result;
 use candle_core::{DType, Device, Tensor};
+use candle_examples::token_output_stream::TokenOutputStream;
 use candle_nn::VarBuilder;
 use candle_transformers::generation::LogitsProcessor;
 use candle_transformers::models::gemma3::{Config, Model};
 use hf_hub::api::sync::ApiBuilder;
-use safetensors::SafeTensors;
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::Read;
 use std::path::PathBuf;
 use tokenizers::Tokenizer;
-use candle_examples::token_output_stream::TokenOutputStream;
 
-const MODEL_ID: &str = "google/gemma-3-270m";
+const MODEL_ID: &str = "google/gemma-3-1b-it";
 const TEMPERATURE: f32 = 1.0;
 const TOP_P: f32 = 0.95;
 const REPEAT_PENALTY: f32 = 1.1;
@@ -53,6 +49,7 @@ impl TextGeneration {
 
     fn run(&mut self, prompt: &str, sample_len: usize) -> Result<()> {
         use std::io::Write;
+
         self.tokenizer.clear();
         let mut tokens = self
             .tokenizer
@@ -132,20 +129,6 @@ struct GemmaModel {
     tokenizer: Tokenizer,
     device: Device,
 }
-fn load_safetensors(path: &str, device: &Device) -> Result<HashMap<String, Tensor>> {
-    let mut bytes = Vec::new();
-    let mut file = File::open(path)?;
-    file.read_to_end(&mut bytes)?;
-    let safetensors = SafeTensors::deserialize(&bytes)?;
-
-    let mut tensors = HashMap::new();
-    for (name, view) in safetensors.tensors() {
-        // Load each tensor onto the device
-        let tensor = Tensor::from_slice(view.data(), view.shape(), device)?;
-        tensors.insert(name.to_string(), tensor);
-    }
-    Ok(tensors)
-}
 
 impl GemmaModel {
     fn new() -> Result<Self> {
@@ -184,11 +167,7 @@ impl GemmaModel {
                 t
             }
             Err(e) => {
-                println!("⚠️  Failed to load tokenizer from {}: {}", MODEL_ID, e);
-                println!("Creating a basic tokenizer instead...");
-
-                // Create a basic tokenizer as fallback
-                Tokenizer::new(tokenizers::models::bpe::BPE::default())
+                anyhow::bail!("Failed to load tokenizer from {}: {}", MODEL_ID, e);
             }
         };
 
@@ -198,17 +177,12 @@ impl GemmaModel {
             &tensor_path.clone().into_os_string().into_string().unwrap()
         );
 
-        let tensors = load_safetensors(
-            &tensor_path.into_os_string().into_string().unwrap(),
-            &device,
-        )?;
-
         let dtype = if device.is_cuda() {
             DType::BF16
         } else {
             DType::F32
         };
-        let vb = VarBuilder::from_tensors(tensors, dtype, &device);
+        let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[tensor_path], dtype, &device)? };
         let model = Model::new(false, &config, vb)?;
 
         Ok(Self {
@@ -247,7 +221,11 @@ async fn main() -> Result<()> {
         &gemma_model.device,
     );
     let prompt = "Classify: This product is amazing";
-    pipeline.run(&prompt, 100)?;
+    let prompt_it = format!(
+        "<start_of_turn> user\n{}<end_of_turn>\n<start_of_turn> model\n",
+        prompt
+    );
+    pipeline.run(&prompt_it, 100)?;
 
     Ok(())
 }
