@@ -95,6 +95,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "bindgen_cuda"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f8489af5b7d17a81bffe37e0f4d6e1e4de87c87329d05447f22c35d95a1227d"
+dependencies = [
+ "glob",
+ "num_cpus",
+ "rayon",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -165,6 +176,8 @@ version = "0.9.1"
 source = "git+https://github.com/huggingface/candle#03e9ce0e7248002f150bf40bb647116361020381"
 dependencies = [
  "byteorder",
+ "candle-kernels",
+ "cudarc",
  "float8",
  "gemm 0.17.1",
  "half",
@@ -177,8 +190,17 @@ dependencies = [
  "safetensors 0.4.5",
  "thiserror 1.0.69",
  "ug",
+ "ug-cuda",
  "yoke 0.7.5",
  "zip",
+]
+
+[[package]]
+name = "candle-kernels"
+version = "0.9.1"
+source = "git+https://github.com/huggingface/candle#03e9ce0e7248002f150bf40bb647116361020381"
+dependencies = [
+ "bindgen_cuda",
 ]
 
 [[package]]
@@ -320,6 +342,16 @@ name = "crunchy"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
+
+[[package]]
+name = "cudarc"
+version = "0.16.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17200eb07e7d85a243aa1bf4569a7aa998385ba98d14833973a817a63cc86e92"
+dependencies = [
+ "half",
+ "libloading",
+]
 
 [[package]]
 name = "darling"
@@ -548,6 +580,7 @@ name = "float8"
 version = "0.2.1"
 source = "git+https://github.com/zackangelo/float8?branch=cudarc_0_16#03c1f5fe7cdb2f9cb690823fdd40593be57c408f"
 dependencies = [
+ "cudarc",
  "half",
  "num-traits",
  "rand",
@@ -953,6 +986,12 @@ name = "gimli"
 version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07e28edb80900c19c28f1072f2e8aeca7fa06b23cd4169cefe1af5aa3260783f"
+
+[[package]]
+name = "glob"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
 name = "h2"
@@ -2681,6 +2720,19 @@ dependencies = [
  "thiserror 1.0.69",
  "tracing",
  "yoke 0.7.5",
+]
+
+[[package]]
+name = "ug-cuda"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14053653d0b7fa7b21015aa9a62edc8af2f60aa6f9c54e66386ecce55f22ed29"
+dependencies = [
+ "cudarc",
+ "half",
+ "serde",
+ "thiserror 1.0.69",
+ "ug",
 ]
 
 [[package]]
