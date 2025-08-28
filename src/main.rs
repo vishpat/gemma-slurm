@@ -16,9 +16,6 @@ const REPEAT_PENALTY: f32 = 1.1;
 const REPEAT_LAST_N: usize = 64;
 
 struct TextGeneration {
-    model: Model,
-    device: Device,
-    tokenizer: TokenOutputStream,
     logits_processor: LogitsProcessor,
     repeat_penalty: f32,
     repeat_last_n: usize,
@@ -27,51 +24,45 @@ struct TextGeneration {
 impl TextGeneration {
     #[allow(clippy::too_many_arguments)]
     fn new(
-        model: Model,
-        tokenizer: Tokenizer,
         seed: u64,
         temp: Option<f64>,
         top_p: Option<f64>,
         repeat_penalty: f32,
         repeat_last_n: usize,
-        device: &Device,
     ) -> Self {
         let logits_processor = LogitsProcessor::new(seed, temp, top_p);
         Self {
-            model,
-            tokenizer: TokenOutputStream::new(tokenizer),
             logits_processor,
             repeat_penalty,
             repeat_last_n,
-            device: device.clone(),
         }
     }
 
-    fn run(&mut self, prompt: &str, sample_len: usize) -> Result<()> {
+    fn run(&mut self, gemma_model: &mut GemmaModel, prompt: &str, sample_len: usize) -> Result<()> {
         use std::io::Write;
 
-        self.tokenizer.clear();
-        let mut tokens = self
-            .tokenizer
+        let mut tokenizer = TokenOutputStream::new(gemma_model.tokenizer.clone());
+        tokenizer.clear();
+        let mut tokens = tokenizer
             .tokenizer()
             .encode(prompt, true)
             .map_err(E::msg)?
             .get_ids()
             .to_vec();
         for &t in tokens.iter() {
-            if let Some(t) = self.tokenizer.next_token(t)? {
+            if let Some(t) = tokenizer.next_token(t)? {
                 print!("{t}")
             }
         }
         std::io::stdout().flush()?;
 
         let mut generated_tokens = 0usize;
-        let eos_token = match self.tokenizer.get_token("<eos>") {
+        let eos_token = match tokenizer.get_token("<eos>") {
             Some(token) => token,
             None => anyhow::bail!("cannot find the <eos> token"),
         };
 
-        let eot_token = match self.tokenizer.get_token("<end_of_turn>") {
+        let eot_token = match tokenizer.get_token("<end_of_turn>") {
             Some(token) => token,
             None => {
                 println!(
@@ -86,8 +77,8 @@ impl TextGeneration {
             let context_size = if index > 0 { 1 } else { tokens.len() };
             let start_pos = tokens.len().saturating_sub(context_size);
             let ctxt = &tokens[start_pos..];
-            let input = Tensor::new(ctxt, &self.device)?.unsqueeze(0)?;
-            let logits = self.model.forward(&input, start_pos)?;
+            let input = Tensor::new(ctxt, &gemma_model.device)?.unsqueeze(0)?;
+            let logits = gemma_model.model.forward(&input, start_pos)?;
             let logits = logits.squeeze(0)?.squeeze(0)?.to_dtype(DType::F32)?;
             let logits = if self.repeat_penalty == 1. {
                 logits
@@ -106,13 +97,13 @@ impl TextGeneration {
             if next_token == eos_token || next_token == eot_token {
                 break;
             }
-            if let Some(t) = self.tokenizer.next_token(next_token)? {
+            if let Some(t) = tokenizer.next_token(next_token)? {
                 print!("{t}");
                 std::io::stdout().flush()?;
             }
         }
         let dt = start_gen.elapsed();
-        if let Some(rest) = self.tokenizer.decode_rest().map_err(E::msg)? {
+        if let Some(rest) = tokenizer.decode_rest().map_err(E::msg)? {
             print!("{rest}");
         }
         std::io::stdout().flush()?;
@@ -195,33 +186,36 @@ impl GemmaModel {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("🚀 Initializing Language Model Question-Answer System");
-    println!("Loading model (this may take a moment on first run)...");
+    loop {
+        println!("🚀 Initializing Language Model Question-Answer System");
+        println!("Loading model (this may take a moment on first run)...");
 
-    let gemma_model = match GemmaModel::new() {
-        Ok(model) => model,
-        Err(e) => {
-            eprintln!("❌ Failed to initialize system: {}", e);
-            eprintln!("💡 This might be due to network issues or model availability");
-            return Err(e);
+        let mut gemma_model = match GemmaModel::new() {
+            Ok(model) => model,
+            Err(e) => {
+                eprintln!("❌ Failed to initialize system: {}", e);
+                eprintln!("💡 This might be due to network issues or model availability");
+                return Err(e);
+            }
+        };
+
+        println!("\n✅ System ready! Type your questions below (type 'quit' to exit)");
+        println!("{}", "=".repeat(50));
+
+        let mut pipeline = TextGeneration::new(
+            100,
+            Some(TEMPERATURE.into()),
+            Some(TOP_P.into()),
+            REPEAT_PENALTY,
+            REPEAT_LAST_N,
+        );
+        let mut prompt = String::new();
+        std::io::stdin().read_line(&mut prompt)?;
+        if prompt.trim() == "quit" {
+            break;
         }
-    };
-
-    println!("\n✅ System ready! Type your questions below (type 'quit' to exit)");
-    println!("{}", "=".repeat(50));
-
-    let mut pipeline = TextGeneration::new(
-        gemma_model.model,
-        gemma_model.tokenizer,
-        100,
-        Some(TEMPERATURE.into()),
-        Some(TOP_P.into()),
-        REPEAT_PENALTY,
-        REPEAT_LAST_N,
-        &gemma_model.device,
-    );
-    let prompt = "What is the capital of India?";
-    pipeline.run(&prompt, 100)?;
+        pipeline.run(&mut gemma_model, &prompt, 100)?;
+    }
 
     Ok(())
 }
