@@ -186,19 +186,19 @@ impl GemmaModel {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    println!("🚀 Initializing Language Model Question-Answer System");
+    println!("Loading model (this may take a moment on first run)...");
+
+    let mut gemma_model = match GemmaModel::new() {
+        Ok(model) => model,
+        Err(e) => {
+            eprintln!("❌ Failed to initialize system: {}", e);
+            eprintln!("💡 This might be due to network issues or model availability");
+            return Err(e);
+        }
+    };
+
     loop {
-        println!("🚀 Initializing Language Model Question-Answer System");
-        println!("Loading model (this may take a moment on first run)...");
-
-        let mut gemma_model = match GemmaModel::new() {
-            Ok(model) => model,
-            Err(e) => {
-                eprintln!("❌ Failed to initialize system: {}", e);
-                eprintln!("💡 This might be due to network issues or model availability");
-                return Err(e);
-            }
-        };
-
         println!("\n✅ System ready! Type your questions below (type 'quit' to exit)");
         println!("{}", "=".repeat(50));
 
@@ -214,6 +214,7 @@ async fn main() -> Result<()> {
         if prompt.trim() == "quit" {
             break;
         }
+        gemma_model.model.clear_kv_cache();
         pipeline.run(&mut gemma_model, &prompt, 100)?;
     }
 
